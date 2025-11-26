@@ -1,7 +1,7 @@
 // clang-format off
 
 static char  * usage = 
-"usage: genxormiter [-h | --help] [ <n> [ <seed> ] ]\n"
+"usage: genxormiter [-h | --help] [-v | --verbose] [ <n> [ <seed> ] ]\n"
 ;
 
 // clang-format on
@@ -23,12 +23,15 @@ static char  * usage =
 
 static int inputs;
 static uint64_t seed;
+static bool verbose;
 
 static uint64_t next(void) {
   return seed = seed * 6364136223846793005ul + 1442695040888963407ul;
 }
 
 static int pick(unsigned mod) { return (mod / 4294967296.0) * (next() >> 32); }
+
+static bool flip(void) { return pick(2); }
 
 static void swap(int *begin, int i) {
   assert(0 <= i), assert(i < inputs);
@@ -96,13 +99,17 @@ static void parse_seed(const char *arg) {
 }
 
 int main(int argc, char **argv) {
+
   const char *seed_option = 0;
   const char *inputs_option = 0;
+
   for (int i = 1; i != argc; i++) {
     const char *arg = argv[i];
     if (!strcmp(arg, "-h") || !strcmp(arg, "--help")) {
       fputs(usage, stdout);
       exit(0);
+    } else if (!strcmp(arg, "-v") || !strcmp(arg, "--verbose")) {
+      verbose = true;
     } else if (arg[0] == '-')
       die("invalid option '%s' (try '-h'", arg);
     else if (seed_option)
@@ -116,7 +123,9 @@ int main(int argc, char **argv) {
       seed_option = arg;
     }
   }
+
   int *s[2];
+
   for (int i = 0; i != 2; i++) {
     s[i] = malloc(inputs * sizeof *s[i]);
     if (inputs && !s[i])
@@ -131,18 +140,58 @@ int main(int argc, char **argv) {
   }
 
   printf("c genxormiter %d %" PRIu64 "\n", inputs, seed);
+
+  if (inputs == 0) {
+    printf("p cnf 0 1\n0\n");
+    return 0;
+  }
+
   for (int i = 0; i != 2; i++)
-    for (int j = 0; j != inputs; j++)
-      s[i][j] = j + 1;
+    for (int j = 0; j != inputs; j++) {
+      int lit = j + 1;
+      if (flip())
+        lit = -lit;
+      s[i][j] = lit;
+    }
+
   for (int i = 0; i != 2; i++)
     for (int j = 0; j != inputs; j++)
       swap(s[i], j);
-  for (int i = 0; i != 2; i++) {
-    printf("c %d s[%d] inputs\n", inputs, i);
-    for (int j = 0; j != inputs; j++)
-      printf("%d\n", s[i][j]);
-  }
+
+  if (verbose)
+    for (int i = 0; i != 2; i++) {
+      printf("c s[%d] inputs\n", i);
+      for (int j = 0; j != inputs; j++)
+        printf("c s[%d][%d] = %d\n", i, j, s[i][j]);
+    }
+
+  int *t[2] = {0, 0};
+
   for (int i = 0; i != 2; i++)
-    free(s[i]);
+    if (inputs > 1 && !(t[i] = malloc((inputs - 1) * sizeof *t[i])))
+      die("out-of-memory allocating temporary stack of variables");
+
+  // int m[2] = {inputs, inputs};
+  int n[2] = {inputs - 1, inputs - 1};
+
+  int idx = inputs + 1;
+  for (int i = 0; i != 2; i++)
+    for (int j = 0; j != n[i]; j++) {
+      int lit = idx++;
+      if (flip())
+        lit = -lit;
+      t[i][j] = lit;
+    }
+
+  if (verbose)
+    for (int i = 0; i != 2; i++) {
+      printf("c t[%d] temporaries\n", i);
+      for (int j = 0; j != n[i]; j++)
+        printf("c t[%d][%d] = %d\n", i, j, t[i][j]);
+    }
+
+  for (int i = 0; i != 2; i++)
+    free(s[i]), free(t[i]);
+
   return 0;
 }
