@@ -1,7 +1,15 @@
 // clang-format off
 
 static char  * usage = 
-"usage: genxormiter [-h | --help] [-v | --verbose] [ <n> [ <seed> ] ]\n"
+"usage: genxormiter [ <option> ... ] [ <inputs> [ <seed> ] ]\n"
+"\n"
+"where '<option>' is one of the following\n"
+"\n"
+"  -h | --help     print this command line option summary\n"
+"  -l | --linear   linear order (no randomization)\n"
+"  -s | --same     same input order for parity circuits\n"
+"  -r | --reverse  reverse order in second circuit\n"
+"\n"
 ;
 
 // clang-format on
@@ -63,6 +71,9 @@ static size_t clauses;
 static size_t distincts;
 static size_t xors;
 
+static bool same;
+static bool linear;
+static bool reverse;
 static uint64_t seed;
 static int verbose;
 
@@ -158,8 +169,9 @@ static void ternary(struct clause *c, int lit0, int lit1, int lit2) {
   assert(abs(lit0) != abs(lit2));
   assert(abs(lit1) != abs(lit2));
   int lits[3] = {lit0, lit1, lit2};
-  for (int k = 0; k != 3; k++)
-    SWAP(lits, k, 3);
+  if (!linear)
+    for (int k = 0; k != 3; k++)
+      SWAP(lits, k, 3);
   if (verbose > 1)
     printf("c c[%zu] %d %d %d\n", clauses, lits[0], lits[1], lits[2]);
   assert(clauses < expected);
@@ -168,12 +180,14 @@ static void ternary(struct clause *c, int lit0, int lit1, int lit2) {
 }
 
 static void xordef(struct clause *c, int lhs, int rhs0, int rhs1) {
-  if (flip())
-    lhs = -lhs, rhs0 = -rhs0;
-  if (flip())
-    lhs = -lhs, rhs1 = -rhs1;
-  if (flip())
-    rhs0 = -rhs0, rhs1 = -rhs1;
+  if (!linear) {
+    if (flip())
+      lhs = -lhs, rhs0 = -rhs0;
+    if (flip())
+      lhs = -lhs, rhs1 = -rhs1;
+    if (flip())
+      rhs0 = -rhs0, rhs1 = -rhs1;
+  }
   if (verbose)
     printf("c x[%zu] %d = %d ^ %d\n", xors, lhs, rhs0, rhs1);
   ternary(c, lhs, rhs0, -rhs1);
@@ -187,8 +201,9 @@ static void binary(struct clause *c, int lit0, int lit1) {
   valid(lit0), valid(lit1);
   assert(abs(lit0) != abs(lit1));
   int lits[3] = {lit0, lit1, 0};
-  for (int k = 0; k != 2; k++)
-    SWAP(lits, k, 2);
+  if (!linear)
+    for (int k = 0; k != 2; k++)
+      SWAP(lits, k, 2);
   if (verbose > 1)
     printf("c c[%zu] %d %d\n", clauses, lits[0], lits[1]);
   assert(clauses < expected);
@@ -197,7 +212,7 @@ static void binary(struct clause *c, int lit0, int lit1) {
 }
 
 static void distinct(struct clause *c, int lit0, int lit1) {
-  if (flip())
+  if (!linear && flip())
     lit0 = -lit0, lit1 = -lit1;
   if (verbose)
     printf("c d[%zu] %d != %d\n", distincts, lit0, lit1);
@@ -218,6 +233,12 @@ int main(int argc, char **argv) {
       exit(0);
     } else if (!strcmp(arg, "-v") || !strcmp(arg, "--verbose")) {
       verbose += (verbose < 2);
+    } else if (!strcmp(arg, "-l") || !strcmp(arg, "--linear")) {
+      linear = true;
+    } else if (!strcmp(arg, "-s") || !strcmp(arg, "--same")) {
+      same = true;
+    } else if (!strcmp(arg, "-r") || !strcmp(arg, "--reverse")) {
+      reverse = true;
     } else if (arg[0] == '-')
       die("invalid option '%s' (try '-h'", arg);
     else if (seed_option)
@@ -247,7 +268,7 @@ int main(int argc, char **argv) {
   }
 
   if (inputs == 1) {
-    int lit = flip() ? -1 : 1;
+    int lit = !linear && flip() ? -1 : 1;
     printf("p cnf 1 2\n");
     printf("%d 0\n", lit);
     printf("%d 0\n", -lit);
@@ -263,10 +284,11 @@ int main(int argc, char **argv) {
 
   for (int j = 0; j != variables; j++) {
     int lit = j + 1;
-    if (flip())
+    if (!linear && flip())
       lit = -lit;
     m[j] = lit;
-    SWAP(m, j, variables);
+    if (!linear)
+      SWAP(m, j, variables);
   }
 
   if (verbose) {
@@ -285,9 +307,18 @@ int main(int argc, char **argv) {
   for (int i = 0; i != 2; i++) {
     if (!(s[i] = malloc(inputs * sizeof *s[i])))
       die("out-of-memory allocating %s stack", i ? "first" : "second");
-    for (int j = 0; j != inputs; j++) {
-      s[i][j] = m[j];
-      SWAP(s[i], j, inputs);
+    if (i && same) {
+      for (int j = 0; j != inputs; j++)
+        s[1][j] = s[0][j];
+    } else if (i && reverse) {
+      for (int j = 0; j != inputs; j++)
+        s[1][j] = s[0][inputs - 1 - j];
+    } else {
+      for (int j = 0; j != inputs; j++) {
+        s[i][j] = m[j];
+        if (!linear)
+          SWAP(s[i], j, inputs);
+      }
     }
   }
 
@@ -305,12 +336,15 @@ int main(int argc, char **argv) {
       i = 1;
     else if (n[1] == 1)
       i = 0;
+    else if (linear)
+      i = 0;
     else
       i = flip();
     assert(n[i] >= 2);
     int lhs = m[temporary++], rhs[2];
     for (int k = 0; k != 2; k++) {
-      SWAP(s[i], n[i] - 1, n[i]);
+      if (!linear && !same && !reverse)
+        SWAP(s[i], n[i] - 1, n[i]);
       rhs[k] = s[i][--n[i]];
     }
     xordef(c, lhs, rhs[0], rhs[1]);
@@ -325,8 +359,9 @@ int main(int argc, char **argv) {
 
   assert(clauses == expected);
 
-  for (size_t j = 0; j != clauses; j++)
-    SWAP(c, j, clauses);
+  if (!linear)
+    for (size_t j = 0; j != clauses; j++)
+      SWAP(c, j, clauses);
 
   printf("p cnf %zu %zu\n", variables, clauses);
 
@@ -334,9 +369,9 @@ int main(int argc, char **argv) {
     for (size_t k = 0; k != 3; k++) {
       int lit = c[j].lits[k];
       if (lit)
-	printf ("%d ", lit);
+        printf("%d ", lit);
     }
-    fputs ("0\n", stdout);
+    fputs("0\n", stdout);
   }
 
   for (int i = 0; i != 2; i++)
