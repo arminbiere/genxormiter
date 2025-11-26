@@ -33,18 +33,41 @@ static int pick(unsigned mod) { return (mod / 4294967296.0) * (next() >> 32); }
 
 static bool flip(void) { return pick(2); }
 
-static void swap(int *begin, int i) {
-  assert(0 <= i), assert(i < inputs);
+struct clause {
+  int size;
+  int lits[4];
+};
+
+#if 0
+static void swap(int *begin, int i, int n) {
+  assert(0 <= i), assert(i < n);
   if (!i)
     return;
   int j = pick(i + 1u);
   if (i == j)
     return;
-  assert(0 <= j), assert(j < inputs);
+  assert(0 <= j), assert(j < n);
   int tmp = begin[i];
   begin[i] = begin[j];
   begin[j] = tmp;
 }
+#else
+#define SWAP(BEGIN, I, N)                                                      \
+  do {                                                                         \
+    assert(0 <= I), assert(I < N);                                             \
+    if (!I)                                                                    \
+      break;                                                                   \
+    int J = pick(I + 1u);                                                      \
+    if (I == J)                                                                \
+      break;                                                                   \
+    assert(0 <= J), assert(J < N);                                             \
+    const size_t BYTES = sizeof BEGIN[0];                                      \
+    char TMP[BYTES];                                                           \
+    memcpy(TMP, BEGIN + I, BYTES);                                             \
+    memcpy(BEGIN + I, BEGIN + J, BYTES);                                       \
+    memcpy(BEGIN + J, TMP, BYTES);                                             \
+  } while (0)
+#endif
 
 static void die(const char *fmt, ...) {
   va_list ap;
@@ -156,7 +179,7 @@ int main(int argc, char **argv) {
 
   for (int i = 0; i != 2; i++)
     for (int j = 0; j != inputs; j++)
-      swap(s[i], j);
+      SWAP(s[i], j, inputs);
 
   if (verbose)
     for (int i = 0; i != 2; i++) {
@@ -165,23 +188,34 @@ int main(int argc, char **argv) {
         printf("c s[%d][%d] = %d\n", i, j, s[i][j]);
     }
 
+  const int temporaries = inputs - 1;
   int *t[2] = {0, 0};
 
   for (int i = 0; i != 2; i++)
-    if (inputs > 1 && !(t[i] = malloc((inputs - 1) * sizeof *t[i])))
+    if (inputs > 1 && !(t[i] = malloc((temporaries) * sizeof *t[i])))
       die("out-of-memory allocating temporary stack of variables");
 
-  // int m[2] = {inputs, inputs};
-  int n[2] = {inputs - 1, inputs - 1};
+  int n[2] = {0, 0};
 
-  int idx = inputs + 1;
+  int variables = inputs;
+
+  while (n[0] != temporaries || n[1] != temporaries) {
+    int i;
+    if (n[0] == temporaries)
+      i = 1;
+    else if (n[1] == temporaries)
+      i = 0;
+    else
+      i = flip();
+    assert(n[i] < temporaries);
+    int lit = ++variables;
+    if (flip())
+      lit = -lit;
+    t[i][n[i]++] = lit;
+  }
   for (int i = 0; i != 2; i++)
-    for (int j = 0; j != n[i]; j++) {
-      int lit = idx++;
-      if (flip())
-        lit = -lit;
-      t[i][j] = lit;
-    }
+    for (int j = 0; j != temporaries; j++)
+      SWAP(s[i], j, temporaries);
 
   if (verbose)
     for (int i = 0; i != 2; i++) {
@@ -190,8 +224,29 @@ int main(int argc, char **argv) {
         printf("c t[%d][%d] = %d\n", i, j, t[i][j]);
     }
 
+  size_t clauses = 8 * (temporaries) + 2;
+  struct clause *c = malloc(clauses * sizeof *c);
+  if (!c)
+    die("out-of-memory allocating clauses");
+
+  int m[2] = {inputs, inputs};
+  while (m[0] > 1 || m[1] > 1) {
+    int i;
+    if (m[0] == 1)
+      i = 1;
+    else if (m[1] == 1)
+      i = 0;
+    else
+      i = flip();
+    assert(m[i] > 1);
+    break;
+  }
+
+  printf("p cnf %d %zu\n", variables, clauses);
+
   for (int i = 0; i != 2; i++)
     free(s[i]), free(t[i]);
+  free(c);
 
   return 0;
 }
