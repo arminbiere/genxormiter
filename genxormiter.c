@@ -6,10 +6,29 @@ static char  * usage =
 "where '<option>' is one of the following\n"
 "\n"
 "  -h | --help     print this command line option summary\n"
+"  -v | --verbose  include information on variable and XOR order\n"
 "  -l | --linear   linear order (no randomization)\n"
 "  -s | --same     same input order for parity circuits\n"
 "  -r | --reverse  reverse order in second circuit\n"
 "\n"
+
+"The generator prints on '<stdout>' the miter between two circuits of\n"
+"the given number of shared '<inputs>'.  The DIMACS encoding of the input\n"
+"variables as well as the order of the temporary variables introduces for\n"
+"the XOR gates in both circuits is completely random based on the given\n"
+"seed.  Without any seed specified we generate one base on the number of\n"
+"clock ticks of the processor and the current time.\n"
+"\n"
+"The generated instances can be solved through XOR reasoning (as in\n"
+"'Lingeling'), as well as trivially with congruence closure if '-s'\n"
+"is specified, which forces the two circuits two reduce inputs in the\n"
+"same way.  Interesting enough, if the two circuits reduce the inputs\n"
+"in a reverse order (with '-r'), thus in essence a miter between left-\n"
+"versus right-associative parity reduction, the instance is solved with\n"
+"the help of bounded variable elimination.\n"
+"\n"
+"Finally randomizing input and temporary indices can be disabled with '-l'.\n"
+
 ;
 
 // clang-format on
