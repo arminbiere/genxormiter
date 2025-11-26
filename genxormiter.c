@@ -16,11 +16,32 @@ static char  * usage =
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static uint64_t seed;
-static int inputs;
+#include <time.h>
+#include <unistd.h>
 
 #define INPUTS_MAX (INT_MAX / 3)
+
+static int inputs;
+static uint64_t seed;
+
+static uint64_t next(void) {
+  return seed = seed * 6364136223846793005ul + 1442695040888963407ul;
+}
+
+static int pick(unsigned mod) { return (mod / 4294967296.0) * (next() >> 32); }
+
+static void swap(int *begin, int i) {
+  assert(0 <= i), assert(i < inputs);
+  if (!i)
+    return;
+  int j = pick(i + 1u);
+  if (i == j)
+    return;
+  assert(0 <= j), assert(j < inputs);
+  int tmp = begin[i];
+  begin[i] = begin[j];
+  begin[j] = tmp;
+}
 
 static void die(const char *fmt, ...) {
   va_list ap;
@@ -31,11 +52,6 @@ static void die(const char *fmt, ...) {
   fputc('\n', stderr);
   exit(1);
 }
-
-struct stack {
-  int *begin;
-  int *end;
-};
 
 static void parse_inputs(const char *arg) {
   const char *p = arg;
@@ -100,17 +116,33 @@ int main(int argc, char **argv) {
       seed_option = arg;
     }
   }
-  struct stack s[2];
+  int *s[2];
   for (int i = 0; i != 2; i++) {
-    s[i].end = s[i].begin = malloc(inputs * sizeof *s[i].begin);
-    if (inputs && !s[i].begin)
+    s[i] = malloc(inputs * sizeof *s[i]);
+    if (inputs && !s[i])
       die("out-of-memory allocating stack of variables");
   }
+
+  if (!seed_option) {
+    seed = (uint64_t)getpid();
+    (void)next();
+    seed ^= clock();
+    next();
+  }
+
   printf("c genxormiter %d %" PRIu64 "\n", inputs, seed);
-  for (int i = 0; i != inputs; i++)
-    for (int j = 0; j != 2; j++)
-      *s[i].end++ = i;
   for (int i = 0; i != 2; i++)
-    free(s[i].begin);
+    for (int j = 0; j != inputs; j++)
+      s[i][j] = j + 1;
+  for (int i = 0; i != 2; i++)
+    for (int j = 0; j != inputs; j++)
+      swap(s[i], j);
+  for (int i = 0; i != 2; i++) {
+    printf("c %d s[%d] inputs\n", inputs, i);
+    for (int j = 0; j != inputs; j++)
+      printf("%d\n", s[i][j]);
+  }
+  for (int i = 0; i != 2; i++)
+    free(s[i]);
   return 0;
 }
