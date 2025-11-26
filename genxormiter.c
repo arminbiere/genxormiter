@@ -55,10 +55,12 @@ static char  * usage =
 //
 // as INT_MAX is divisible by 3.  That would be off by one.
 
-static int inputs;
-static int temporaries;
-static int variables;
+static size_t inputs;
+static size_t temporaries;
+static size_t variables;
+static size_t expected;
 static size_t clauses;
+static size_t distincts;
 static size_t xors;
 
 static uint64_t seed;
@@ -152,16 +154,20 @@ static void valid(int lit) {
 
 static void ternary(struct clause *c, int lit0, int lit1, int lit2) {
   valid(lit0), valid(lit1), valid(lit2);
+  assert(abs(lit0) != abs(lit1));
+  assert(abs(lit0) != abs(lit2));
+  assert(abs(lit1) != abs(lit2));
   int lits[3] = {lit0, lit1, lit2};
   for (int k = 0; k != 3; k++)
     SWAP(lits, k, 3);
   if (verbose > 1)
     printf("c c[%zu] %d %d %d\n", clauses, lits[0], lits[1], lits[2]);
+  assert(clauses < expected);
   memcpy(c[clauses].lits, lits, sizeof lits);
   clauses++;
 }
 
-static void XOR(struct clause *c, int lhs, int rhs0, int rhs1) {
+static void xordef(struct clause *c, int lhs, int rhs0, int rhs1) {
   if (flip())
     lhs = -lhs, rhs0 = -rhs0;
   if (flip())
@@ -175,6 +181,29 @@ static void XOR(struct clause *c, int lhs, int rhs0, int rhs1) {
   ternary(c, -lhs, rhs0, rhs1);
   ternary(c, -lhs, -rhs0, -rhs1);
   xors++;
+}
+
+static void binary(struct clause *c, int lit0, int lit1) {
+  valid(lit0), valid(lit1);
+  assert(abs(lit0) != abs(lit1));
+  int lits[3] = {lit0, lit1, 0};
+  for (int k = 0; k != 2; k++)
+    SWAP(lits, k, 2);
+  if (verbose > 1)
+    printf("c c[%zu] %d %d\n", clauses, lits[0], lits[1]);
+  assert(clauses < expected);
+  memcpy(c[clauses].lits, lits, sizeof lits);
+  clauses++;
+}
+
+static void distinct(struct clause *c, int lit0, int lit1) {
+  if (flip())
+    lit0 = -lit0, lit1 = -lit1;
+  if (verbose)
+    printf("c d[%zu] %d != %d\n", distincts, lit0, lit1);
+  binary(c, lit0, lit1);
+  binary(c, -lit0, -lit1);
+  distincts++;
 }
 
 int main(int argc, char **argv) {
@@ -210,7 +239,7 @@ int main(int argc, char **argv) {
     next();
   }
 
-  printf("c genxormiter %d %" PRIu64 "\n", inputs, seed);
+  printf("c genxormiter %zu %" PRIu64 "\n", inputs, seed);
 
   if (inputs == 0) {
     printf("p cnf 0 1\n0\n");
@@ -241,13 +270,14 @@ int main(int argc, char **argv) {
   }
 
   if (verbose) {
-    for (int j = 0; j != inputs; j++)
-      printf("c m[%d] = input[%d] = %d\n", j, j, m[j]);
-    for (int j = inputs; j != variables; j++)
-      printf("c m[%d] = temporary[%d] = %d\n", j, j - inputs, m[j]);
+    for (size_t j = 0; j != inputs; j++)
+      printf("c m[%zu] = input[%zu] = %d\n", j, j, m[j]);
+    for (size_t j = inputs; j != variables; j++)
+      printf("c m[%zu] = temporary[%zu] = %d\n", j, j - inputs, m[j]);
   }
 
-  struct clause *c = malloc(4 * temporaries * sizeof *c);
+  expected = 4 * temporaries + 2;
+  struct clause *c = malloc(expected * sizeof *c);
   if (!c)
     die("out-of-memory allocating clauses");
 
@@ -269,7 +299,7 @@ int main(int argc, char **argv) {
   int n[2] = {inputs, inputs};
   assert(n[0]), assert(n[1]);
   int temporary = inputs;
-  while (n[0] + n[1] > 3) {
+  while (n[0] > 1 || n[1] > 1) {
     int i;
     if (n[0] == 1)
       i = 1;
@@ -283,18 +313,31 @@ int main(int argc, char **argv) {
       SWAP(s[i], n[i] - 1, n[i]);
       rhs[k] = s[i][--n[i]];
     }
-    XOR(c, lhs, rhs[0], rhs[1]);
+    xordef(c, lhs, rhs[0], rhs[1]);
     assert(n[i] < inputs);
     s[i][n[i]++] = lhs;
   }
-  assert(n[0] + n[1] == 3);
-  assert(temporary + 1 == variables);
 
-  printf("p cnf %d %zu\n", variables, clauses);
+  assert(n[0] == 1), assert(n[1] == 1);
+  assert(temporary == variables);
 
-  int i = (n[0] == 1);
-  assert(n[i] == 2);
-  assert(n[!i] == 1);
+  distinct(c, s[0][0], s[1][0]);
+
+  assert(clauses == expected);
+
+  for (size_t j = 0; j != clauses; j++)
+    SWAP(c, j, clauses);
+
+  printf("p cnf %zu %zu\n", variables, clauses);
+
+  for (size_t j = 0; j != clauses; j++) {
+    for (size_t k = 0; k != 3; k++) {
+      int lit = c[j].lits[k];
+      if (lit)
+	printf ("%d ", lit);
+    }
+    fputs ("0\n", stdout);
+  }
 
   for (int i = 0; i != 2; i++)
     free(s[i]);
